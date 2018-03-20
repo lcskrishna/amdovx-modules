@@ -64,6 +64,14 @@ vx_node createNode(vx_graph graph, vx_enum kernelEnum, vx_reference params[], vx
     return node;
 }
 
+int get_counter() {
+    return counter;
+}
+
+void increment_counter() {
+    counter++;
+}
+
 vx_reference getNodeParameterByIndex(vx_node node, vx_uint32 index)
 {
     vx_reference ref = NULL;

@@ -22,6 +22,8 @@ THE SOFTWARE.
 
 #include "kernels.h"
 
+#include <string>
+
 struct ConvolutionLayerLocalData {
     NeuralNetworkCommonHandle * handle;
     float alpha;
@@ -45,39 +47,41 @@ static vx_status VX_CALLBACK validateConvolutionLayer(vx_node node, const vx_ref
     // check scalar type
     vx_enum type;
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[3], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_NN_CONVOLUTION_PARAMS) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_NN_CONVOLUTION_PARAMS) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: conv: #3 type=%d (must be CONV_PARAMS)\n", type);
 
     // check tensor dimensions
     vx_size num_dims;
     vx_size input_dims[4], weights_dims[4], output_dims[4];
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
+    if(num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: #0 num_dims=%ld (must be 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: conv: #0 type=%d (must be float)\n", type);
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
+    if(num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: #1 num_dims=%ld (must be 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: conv: #1 type=%d (must be float)\n", type);
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, weights_dims, sizeof(weights_dims)));
     if(parameters[2]) {
         ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
         ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-        if(num_dims != 1 && num_dims != 2) return VX_ERROR_INVALID_DIMENSION;
-        if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
+        if(num_dims != 1 && num_dims != 2) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: #2 num_dims=%ld (must be 1 or 2)\n", num_dims);
+        if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: conv: #2 type=%d (must be float)\n", type);
         vx_size bias_dims[2] = { 0, 1 };
         ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_DIMS, bias_dims, num_dims*sizeof(bias_dims[0])));
-        if(bias_dims[0] != weights_dims[3] || bias_dims[1] != 1) return VX_ERROR_INVALID_DIMENSION;
+        if(bias_dims[0] != weights_dims[3] || bias_dims[1] != 1) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: bias[%ldx%ld] weights[%ldx%ldx%ldx%ld]\n", bias_dims[1], bias_dims[0], weights_dims[3], weights_dims[2], weights_dims[1], weights_dims[0]);
     }
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[4], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[4], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
+    if(num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: #4 num_dims=%ld (must be 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: conv: #4 type=%d (must be float)\n", type);
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[4], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
 
-    if(output_dims[3] != input_dims[3]) return VX_ERROR_INVALID_DIMENSION;
-    if(input_dims[2] != weights_dims[2]) return VX_ERROR_INVALID_DIMENSION;
-    if(output_dims[2] != weights_dims[3]) return VX_ERROR_INVALID_DIMENSION;
+    if(output_dims[3] != input_dims[3] || input_dims[2] != weights_dims[2] || output_dims[2] != weights_dims[3])
+        return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: input[%ldx%ldx%ldx%ld] weights[%ldx%ldx%ldx%ld] output[%ldx%ldx%ldx%ld]\n",
+            input_dims[3], input_dims[2], input_dims[1], input_dims[0],
+            weights_dims[3], weights_dims[2], weights_dims[1], weights_dims[0],
+            output_dims[3], output_dims[2], output_dims[1], output_dims[0]);
 
     // output tensor configuration
     type = VX_TYPE_FLOAT32;
@@ -104,6 +108,89 @@ static vx_status VX_CALLBACK processConvolutionLayer(vx_node node, const vx_refe
 		ERROR_CHECK_MIOPEN_STATUS(miopenConvolutionForwardBias(data->handle->miopen_handle, &data->alpha, data->bias_desc, data->bias_mem,
                                                            &data->beta, data->output_desc, data->output_mem));
     }
+
+    clFinish(data->handle->cmdq);
+
+#if ENABLE_DUMP_LAYERS
+
+    //Dump inputs
+    vx_size input_dims[4];
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS,input_dims, sizeof(input_dims)));
+    std::string input_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_input";
+    FILE * fs_inputs = fopen(input_file_name.c_str(), "wb");
+    long input_total_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
+    float * inputs = new float[input_total_count];
+    cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE,0,  sizeof(float) * input_total_count, inputs, 0, NULL, NULL);
+    clFinish(data->handle->cmdq);
+    if(err != CL_SUCCESS) {
+        std::cout << "ERRRO: in reading buffer inputs." << std::endl;
+    }
+    fwrite(inputs, sizeof(cl_float), input_total_count,  fs_inputs);
+    fclose(fs_inputs);
+    std::cout << "Dump of inputs finished." << std::endl;
+
+    //Dump weights.
+	vx_size weight_dims[4];
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, weight_dims, sizeof(weight_dims)));
+    std::string weight_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_input_w";
+    FILE * fs_weights = fopen(weight_file_name.c_str(), "wb");
+    long total_weight_count = weight_dims[0] * weight_dims[1] * weight_dims[2] * weight_dims[3];
+    float * weights = new float[total_weight_count];
+    err = clEnqueueReadBuffer(data->handle->cmdq, data->weight_mem,CL_TRUE,0, sizeof(float) * total_weight_count, weights, 0, NULL, NULL);
+    clFinish(data->handle->cmdq);
+    if(err != CL_SUCCESS) {
+        std::cout << "ERROR: in reading the buffer weights" << std::endl;
+    }
+    fwrite(weights, sizeof(cl_float), total_weight_count, fs_weights);
+    fclose(fs_weights);
+    std::cout << "Dump of weights finished." << std::endl;
+
+    //Dump biases.
+    if(parameters[2]) {
+        std::string bias_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_input_b";
+        FILE * fs_bias = fopen(bias_file_name.c_str(), "wb");
+        vx_size num_dims;
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
+        if(num_dims != 1 && num_dims != 2) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: conv: #2 num_dims=%ld (must be 1 or 2)\n", num_dims);
+        vx_size bias_dims[2] = { 0, 1 };
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_DIMS, bias_dims, num_dims*sizeof(bias_dims[0])));
+        long total_bias_count = bias_dims[0];
+        float * biases = new float[total_bias_count];
+        err = clEnqueueReadBuffer(data->handle->cmdq, data->bias_mem, CL_TRUE, 0, sizeof(float) * total_bias_count, biases, 0, NULL, NULL);
+        if(err != CL_SUCCESS) {
+            std::cout << "ERROR: in reading the buffer biases" << std::endl;
+        }
+
+        fwrite(biases, sizeof(cl_float), total_bias_count , fs_bias);
+        fclose(fs_bias);
+        std::cout << "Dump of biases finished." << std::endl;
+        clFinish(data->handle->cmdq);
+
+        delete biases;
+    }
+
+    //Dump outputs.
+    vx_size output_dims[4];
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[4], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
+    std::string output_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_output";
+    FILE * fs_outputs = fopen(output_file_name.c_str(), "wb");
+    long output_total_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
+    float * outputs = new float[output_total_count];
+    err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE, 0, sizeof(float) * output_total_count, outputs, 0, NULL, NULL);
+    clFinish(data->handle->cmdq);
+    if(err != CL_SUCCESS) {
+        std::cout << "ERROR: reading buffer outputs" << std::endl;
+    }
+    fwrite(outputs, sizeof(cl_float), output_total_count, fs_outputs);
+    fclose(fs_outputs);
+
+    increment_counter();
+
+    delete weights;
+    delete inputs;
+    delete outputs;
+
+#endif
 
     return VX_SUCCESS;
 }
@@ -203,6 +290,7 @@ static vx_status VX_CALLBACK initializeConvolutionLayer(vx_node node, const vx_r
     std::cout << "weights " << weights_dims[0] << " " << weights_dims[1] << " "<< weights_dims[2] <<" " <<  weights_dims[3] << " ";
     std::cout << "bias " << bias_dims[0] << " ";
     std::cout << "stride " << stride_h << " " << stride_w << " " << "pad " << pad_h << " " << pad_w;
+    std::cout << " dilation " << dilation_h << " " << dilation_w;
     std::cout << " output " << output_dims[0] << " " << output_dims[1] << " " << output_dims[2] << " " << output_dims[3] << std::endl;
 #endif
 

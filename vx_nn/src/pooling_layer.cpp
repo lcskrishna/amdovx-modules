@@ -41,33 +41,35 @@ static vx_status VX_CALLBACK validatePoolingLayer(vx_node node, const vx_referen
     // check scalar type
     vx_enum type;
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[1], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_ENUM) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_ENUM) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #1 type=%d (must be enum)\n", type);
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[2], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_SIZE) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_SIZE) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #2 type=%d (must be size)\n", type);
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[3], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_SIZE) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_SIZE) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #3 type=%d (must be size)\n", type);
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[4], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_SIZE) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_SIZE) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #4 type=%d (must be size)\n", type);
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[5], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_SIZE) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_SIZE) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #5 type=%d (must be size)\n", type);
     ERROR_CHECK_STATUS(vxQueryScalar((vx_scalar)parameters[6], VX_SCALAR_TYPE, &type, sizeof(type)));
-    if(type != VX_TYPE_ENUM) return VX_ERROR_INVALID_TYPE;
+    if(type != VX_TYPE_ENUM) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #6 type=%d (must be enum)\n", type);
 
     // check tensor dimensions
     vx_size num_dims;
     vx_size input_dims[4], output_dims[4];
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
+    if (num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: POOL: #0 num_dims=%ld (must be 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #0 type=%d (must be float)\n", type);
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
+    if (num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: POOL: #7 num_dims=%ld (must be 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: POOL: #7 type=%d (must be float)\n", type);
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
-    if (output_dims[2] != input_dims[2]) return VX_ERROR_INVALID_DIMENSION;
-    if (output_dims[3] != input_dims[3]) return VX_ERROR_INVALID_DIMENSION;
+    if (output_dims[3] != input_dims[3] || output_dims[2] != input_dims[2])
+        return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: POOL: dims input[%ld,%ld,%ld,%ld] output[%ld,%ld,%ld,%ld]\n",
+                    input_dims[0], input_dims[1], input_dims[2], input_dims[3],
+                    output_dims[0], output_dims[1], output_dims[2], output_dims[3]);
 
     // output tensor configuration
     type = VX_TYPE_FLOAT32;
@@ -88,6 +90,43 @@ static vx_status VX_CALLBACK processPoolingLayer(vx_node node, const vx_referenc
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_BUFFER_OPENCL, &data->output_mem, sizeof(data->output_mem)));
 
     ERROR_CHECK_MIOPEN_STATUS(miopenPoolingForward(miopenHandle, data->pool_desc, &data->alpha, data->input_desc, data->input_mem, &data->beta, data->output_desc, data->output_mem, false, nullptr, 0));
+
+#if ENABLE_DUMP_LAYERS
+
+	clFinish(data->handle->cmdq);
+	vx_size input_dims[4], output_dims[4];
+	ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
+
+    std::string input_file = "out/" + std::to_string(get_counter()) + "_ann_pooling_layer_input";
+	FILE * fs_inputs = fopen(input_file.c_str(), "wb");
+	long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
+	float * inputs = new float[input_count];
+	cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE, 0, sizeof(float) * input_count, inputs, 0, NULL, NULL);
+	if (err != CL_SUCCESS) {
+		std::cout << "ERROR : in reading the buffer pooling input" << std::endl;
+	}
+	clFinish(data->handle->cmdq);
+	fwrite(inputs, sizeof(float), input_count, fs_inputs);
+	fclose(fs_inputs);
+
+	//output dump
+    std::string output_file = "out/" + std::to_string(get_counter()) + "ann_pool_layer_output";
+	FILE * fs_outputs = fopen(output_file.c_str(), "wb");
+	long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
+	float * outputs = new float[output_count];
+	err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE, 0, sizeof(float) * output_count, outputs, 0, NULL, NULL);
+	if (err != CL_SUCCESS) {
+		std::cout << "ERROR in reading output buffer pooling " << std::endl;
+	}
+	clFinish(data->handle->cmdq);
+	fwrite(outputs, sizeof(float), output_count, fs_outputs);
+	fclose(fs_outputs);
+	increment_counter();
+
+	delete inputs;
+	delete outputs;
+#endif
 
     return VX_SUCCESS;
 }
@@ -141,9 +180,10 @@ static vx_status VX_CALLBACK initializePoolingLayer(vx_node node, const vx_refer
     data->beta = 0;
 
 #if ENABLE_DEBUG_PRINT_DIMS
+    std::string pool_mode = (modeType == VX_NN_POOLING_MAX) ? "max pooling" : "avg pooling";
     std::cout << "pooling input " << input_dims[3] << " " << input_dims[2] << " " << input_dims[1] << " " << input_dims[0] << " ";
     std::cout << "kernel " << kernel_h << " " << kernel_w << " ";
-    std::cout << "stride " << stride_h << " " << stride_w << " " << "pad " << pad_h << " " << pad_w;
+    std::cout << "stride " << stride_h << " " << stride_w << " " << "pad " << pad_h << " " << pad_w << " " << "pooling mode : " << pool_mode << " ";
     std::cout << " output " << output_dims[3] << " " << output_dims[2] << " " << output_dims[1] << " " << output_dims[0] << std::endl;
 #endif
 

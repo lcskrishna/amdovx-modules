@@ -39,28 +39,27 @@ static vx_status VX_CALLBACK validateSoftmaxLayer(vx_node node, const vx_referen
     // check tensor dimensions
     vx_enum type;
     vx_size num_dims;
-    vx_size input_dims[4], output_dims[4];
+    vx_size input_dims[4] = { 1, 1, 1, 1 }, output_dims[4] = { 1, 1, 1, 1 };
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
-    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
+    if(num_dims != 2 && num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: softmax: #0 num_dims=%ld (must be 2 or 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: softmax: #0 type=%d (must be float)\n", type);
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, &input_dims[4-num_dims], num_dims*sizeof(vx_size)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
-    if(num_dims != 4) return VX_ERROR_INVALID_DIMENSION;
-    if(type != VX_TYPE_FLOAT32) return VX_ERROR_INVALID_TYPE;
-    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
-    if(output_dims[3] != input_dims[3]) return VX_ERROR_INVALID_DIMENSION;
-    if(output_dims[2] != input_dims[2]) return VX_ERROR_INVALID_DIMENSION;
-    if(output_dims[1] != input_dims[1]) return VX_ERROR_INVALID_DIMENSION;
-    if(output_dims[0] != input_dims[0]) return VX_ERROR_INVALID_DIMENSION;
+    if(num_dims != 2 && num_dims != 4) return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: softmax: #1 num_dims=%ld (must be 2 or 4)\n", num_dims);
+    if(type != VX_TYPE_FLOAT32) return ERRMSG(VX_ERROR_INVALID_TYPE, "validate: softmax: #1 type=%d (must be float)\n", type);
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, &output_dims[4-num_dims], num_dims*sizeof(vx_size)));
+    if (output_dims[3] != input_dims[3] || output_dims[2] != input_dims[2] ||
+        output_dims[1] != input_dims[1] || output_dims[0] != input_dims[0])
+        return ERRMSG(VX_ERROR_INVALID_DIMENSION, "validate: softmax: dims input[%ld,%ld,%ld,%ld] != output[%ld,%ld,%ld,%ld]\n",
+                    input_dims[0], input_dims[1], input_dims[2], input_dims[3],
+                    output_dims[0], output_dims[1], output_dims[2], output_dims[3]);
 
     // output tensor configuration
-    type = VX_TYPE_FLOAT32;
-    num_dims = 4;
     ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[1], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
     ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[1], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
-    ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[1], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
+    ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[1], VX_TENSOR_DIMS, &output_dims[4-num_dims], num_dims*sizeof(vx_size)));
     return VX_SUCCESS;
 }
 
@@ -75,6 +74,41 @@ static vx_status VX_CALLBACK processSoftmaxLayer(vx_node node, const vx_referenc
 
     ERROR_CHECK_STATUS(miopenSoftmaxForward(miopenHandle, &data->alpha, data->input_desc, data->input_mem, &data->beta, data->output_desc, data->output_mem));
 
+#if ENABLE_DUMP_LAYERS
+    clFinish(data->handle->cmdq);
+    vx_size num_dims;
+    vx_size input_dims[4] = { 1, 1, 1, 1 }, output_dims[4] = { 1, 1, 1, 1 };
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, &input_dims[4-num_dims], num_dims*sizeof(vx_size)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, &output_dims[4-num_dims], num_dims*sizeof(vx_size)));
+
+    long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
+    long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
+
+    std::string input_file_name = "out/" + std::to_string(counter) + "_ann_softmax_layer_input";
+    std::string output_file_name = "out/" + std::to_string(counter) + "_ann_softmax_layer_output";
+    FILE * fs_inputs = fopen(input_file_name.c_str(), "wb");
+    FILE * fs_outputs = fopen(output_file_name.c_str(), "wb");
+
+    float * inputs = new float[input_count];
+    float * outputs = new float[output_count];
+
+    cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE, 0, sizeof(float) * input_count, inputs, 0, NULL, NULL);
+    if (err != CL_SUCCESS) std::cout << "ERROR in reading input buffer softmax." << std::endl;
+    err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE,0, sizeof(float) * output_count, outputs, 0, NULL, NULL);
+    if (err != CL_SUCCESS) std::cout << "ERROR in reading outpt buffer softmax." << std::endl;
+
+    fwrite(inputs, sizeof(float), input_count, fs_inputs);
+    fclose(fs_inputs);
+    delete inputs;
+
+    fwrite(outputs, sizeof(float),output_count, fs_outputs);
+    fclose(fs_outputs);
+    delete outputs;
+
+#endif
+
     return VX_SUCCESS;
 }
 
@@ -85,9 +119,11 @@ static vx_status VX_CALLBACK initializeSoftmaxLayer(vx_node node, const vx_refer
     ERROR_CHECK_STATUS(createGraphHandle(node, &data->handle));
 
     //Parameters input and output.
-    vx_size input_dims[4], output_dims[4];
-    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
-    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
+    vx_size num_dims, input_dims[4] = { 1, 1, 1, 1 }, output_dims[4] = { 1, 1, 1, 1 };
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, &input_dims[4-num_dims], num_dims * sizeof(vx_size)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, &output_dims[4-num_dims], num_dims * sizeof(vx_size)));
 
     ERROR_CHECK_MIOPEN_STATUS(miopenCreateTensorDescriptor(&data->input_desc));
     ERROR_CHECK_MIOPEN_STATUS(miopenCreateTensorDescriptor(&data->output_desc));
