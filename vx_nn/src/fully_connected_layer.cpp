@@ -124,11 +124,14 @@ static vx_status VX_CALLBACK processFullyConnectedLayer(vx_node node, const vx_r
 	std::cout << "Weigth dimensions FC : " << weight_dims[0] << " " << weight_dims[1] << " " << weight_dims[2] << " " << weight_dims[3] << std::endl;
 	std::cout << "Output dimensions FC : " << output_dims[0] << " " << output_dims[1] << " " << output_dims[2] << " " << output_dims[3] << std::endl;
 
-    std::string in_file_name = "out/" + std::to_string(get_counter()) + "_ann_fc_layer_input";
+    char str[10]; sprintf(str, "%04d", get_counter());
+    std::string counter_val = str;
+
+    std::string in_file_name = "out/" + counter_val + "_ann_fc_layer_input";
 	FILE * fs_inputs = fopen(in_file_name.c_str(), "wb");
-    std::string out_file_name = "out/" + std::to_string(get_counter()) + "_ann_fc_layer_output";
+    std::string out_file_name = "out/" + counter_val + "_ann_fc_layer_output";
 	FILE * fs_outputs = fopen(out_file_name.c_str(), "wb");
-    std::string weight_file_name = "out/" + std::to_string(get_counter()) + "_ann_fc_layer_input_w";
+    std::string weight_file_name = "out/" + counter_val + "_ann_fc_layer_input_w";
 	FILE * fs_weights = fopen(weight_file_name.c_str(), "wb");
 
 	long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
@@ -156,10 +159,10 @@ static vx_status VX_CALLBACK processFullyConnectedLayer(vx_node node, const vx_r
 	fclose(fs_weights);
 
 	if (parameters[2]) {
-        std::string bias_file_name = "out/" + std::to_string(get_counter()) + "_ann_fc_layer_input_b";
+        std::string bias_file_name = "out/" + counter_val + "_ann_fc_layer_input_b";
 		FILE * fs_bias = fopen(bias_file_name.c_str(), "wb");
 		ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
-        vx_size bias_dims[2] = { 0, 1 };
+        vx_size bias_dims[2] = { 1, 1 };
 		long bias_count = bias_dims[0] * bias_dims[1];
 		float * biases = new float[bias_count];
         ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_DIMS, bias_dims, num_dims * sizeof(vx_size)));
@@ -177,7 +180,7 @@ static vx_status VX_CALLBACK processFullyConnectedLayer(vx_node node, const vx_r
 	delete outputs;
 	delete weights;
 
-	counter++;
+    increment_counter();
 
 #endif
     

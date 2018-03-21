@@ -95,7 +95,9 @@ static vx_status VX_CALLBACK processActivationLayer(vx_node node, const vx_refer
    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[4], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
 
-   std::string in_file_name = "out/" + std::to_string(counter) + "_ann_relu_layer_input";
+   char str[10]; sprintf(str, "%04d", get_counter());
+   std::string counter_val = str;
+   std::string in_file_name = "out/" + counter_val + "_ann_relu_layer_input";
    long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
    long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
    float * inputs = new float[input_count];
@@ -111,7 +113,7 @@ static vx_status VX_CALLBACK processActivationLayer(vx_node node, const vx_refer
    fclose(fs_inputs);
 
    //output dump.
-   std::string out_file_name = "out/" + std::to_string(counter) + "_ann_relu_layer_output";
+   std::string out_file_name = "out/" + counter_val + "_ann_relu_layer_output";
    FILE * fs_outputs = fopen(out_file_name.c_str(), "wb");
 
    err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE, 0, sizeof(float) * output_count, outputs, 0, NULL, NULL );

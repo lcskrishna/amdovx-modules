@@ -98,7 +98,10 @@ static vx_status VX_CALLBACK processPoolingLayer(vx_node node, const vx_referenc
 	ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
 
-    std::string input_file = "out/" + std::to_string(get_counter()) + "_ann_pooling_layer_input";
+    char str[10]; sprintf(str, "%04d", get_counter());
+    std::string counter_val = str;
+
+    std::string input_file = "out/" + counter_val + "_ann_pooling_layer_input";
 	FILE * fs_inputs = fopen(input_file.c_str(), "wb");
 	long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
 	float * inputs = new float[input_count];
@@ -111,7 +114,7 @@ static vx_status VX_CALLBACK processPoolingLayer(vx_node node, const vx_referenc
 	fclose(fs_inputs);
 
 	//output dump
-    std::string output_file = "out/" + std::to_string(get_counter()) + "ann_pool_layer_output";
+    std::string output_file = "out/" + counter_val + "_ann_pool_layer_output";
 	FILE * fs_outputs = fopen(output_file.c_str(), "wb");
 	long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
 	float * outputs = new float[output_count];

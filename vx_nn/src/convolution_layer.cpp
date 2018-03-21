@@ -116,7 +116,9 @@ static vx_status VX_CALLBACK processConvolutionLayer(vx_node node, const vx_refe
     //Dump inputs
     vx_size input_dims[4];
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS,input_dims, sizeof(input_dims)));
-    std::string input_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_input";
+    char str[10]; sprintf(str, "%04d", get_counter());
+    std::string counter_val = str;
+    std::string input_file_name = "out/" + counter_val + "_ann_conv_layer_input";
     FILE * fs_inputs = fopen(input_file_name.c_str(), "wb");
     long input_total_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
     float * inputs = new float[input_total_count];
@@ -132,7 +134,7 @@ static vx_status VX_CALLBACK processConvolutionLayer(vx_node node, const vx_refe
     //Dump weights.
 	vx_size weight_dims[4];
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_DIMS, weight_dims, sizeof(weight_dims)));
-    std::string weight_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_input_w";
+    std::string weight_file_name = "out/" + counter_val + "_ann_conv_layer_input_w";
     FILE * fs_weights = fopen(weight_file_name.c_str(), "wb");
     long total_weight_count = weight_dims[0] * weight_dims[1] * weight_dims[2] * weight_dims[3];
     float * weights = new float[total_weight_count];
@@ -147,7 +149,7 @@ static vx_status VX_CALLBACK processConvolutionLayer(vx_node node, const vx_refe
 
     //Dump biases.
     if(parameters[2]) {
-        std::string bias_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_input_b";
+        std::string bias_file_name = "out/" + counter_val + "_ann_conv_layer_input_b";
         FILE * fs_bias = fopen(bias_file_name.c_str(), "wb");
         vx_size num_dims;
         ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
@@ -172,7 +174,7 @@ static vx_status VX_CALLBACK processConvolutionLayer(vx_node node, const vx_refe
     //Dump outputs.
     vx_size output_dims[4];
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[4], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
-    std::string output_file_name = "out/" + std::to_string(counter) + "_ann_conv_layer_output";
+    std::string output_file_name = "out/" + counter_val + "_ann_conv_layer_output";
     FILE * fs_outputs = fopen(output_file_name.c_str(), "wb");
     long output_total_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
     float * outputs = new float[output_total_count];

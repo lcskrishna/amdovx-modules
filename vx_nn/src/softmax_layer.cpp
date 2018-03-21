@@ -86,8 +86,11 @@ static vx_status VX_CALLBACK processSoftmaxLayer(vx_node node, const vx_referenc
     long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
     long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
 
-    std::string input_file_name = "out/" + std::to_string(counter) + "_ann_softmax_layer_input";
-    std::string output_file_name = "out/" + std::to_string(counter) + "_ann_softmax_layer_output";
+    char str[10]; sprintf(str, "%04d", get_counter());
+    std::string counter_val = str;
+
+    std::string input_file_name = "out/" + counter_val + "_ann_softmax_layer_input";
+    std::string output_file_name = "out/" + counter_val + "_ann_softmax_layer_output";
     FILE * fs_inputs = fopen(input_file_name.c_str(), "wb");
     FILE * fs_outputs = fopen(output_file_name.c_str(), "wb");
 
@@ -106,6 +109,8 @@ static vx_status VX_CALLBACK processSoftmaxLayer(vx_node node, const vx_referenc
     fwrite(outputs, sizeof(float),output_count, fs_outputs);
     fclose(fs_outputs);
     delete outputs;
+
+    increment_counter();
 
 #endif
 

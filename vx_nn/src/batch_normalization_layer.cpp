@@ -126,8 +126,11 @@ static vx_status VX_CALLBACK processBatchNormalizationLayer(vx_node node, const 
     long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
     long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
 
-    std::string input_file_name = "out/" + std::to_string(counter) + "_ann_batchnorm_layer_input";
-    std::string output_file_name = "out/" + std::to_string(counter) + "_ann_batchnorm_layer_output";
+    char str[10]; sprintf(str, "%04d", get_counter());
+    std::string counter_val = str;
+
+    std::string input_file_name = "out/" + counter_val + "_ann_batchnorm_layer_input";
+    std::string output_file_name = "out/" + counter_val + "_ann_batchnorm_layer_output";
     FILE * fs_inputs = fopen(input_file_name.c_str(), "wb");
     FILE * fs_outputs = fopen(output_file_name.c_str(), "wb");
 
@@ -135,9 +138,9 @@ static vx_status VX_CALLBACK processBatchNormalizationLayer(vx_node node, const 
     float * outputs = new float[output_count];
 
     cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE, 0, sizeof(float) * input_count, inputs, 0, NULL, NULL);
-    if (err != CL_SUCCESS) std::cout << "ERROR in reading input buffer softmax." << std::endl;
+    if (err != CL_SUCCESS) std::cout << "ERROR in reading input buffer BN." << std::endl;
     err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE,0, sizeof(float) * output_count, outputs, 0, NULL, NULL);
-    if (err != CL_SUCCESS) std::cout << "ERROR in reading outpt buffer softmax." << std::endl;
+    if (err != CL_SUCCESS) std::cout << "ERROR in reading outpt buffer BN." << std::endl;
 
     fwrite(inputs, sizeof(float), input_count, fs_inputs);
     fclose(fs_inputs);
@@ -146,6 +149,9 @@ static vx_status VX_CALLBACK processBatchNormalizationLayer(vx_node node, const 
     fwrite(outputs, sizeof(float),output_count, fs_outputs);
     fclose(fs_outputs);
     delete outputs;
+
+    increment_counter();
+
 #endif
 
     return VX_SUCCESS;
