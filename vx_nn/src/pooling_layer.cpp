@@ -36,6 +36,45 @@ struct PoolingLayerLocalData {
     miopenPoolingMode_t mode;
 };
 
+void processAveragePooling(int pad_h, int pad_w, int stride_h, int stride_w, int kernel_w, int kernel_h,
+                            float * inputs, vx_size input_dims[4], float * outputs, vx_size output_dims[4])
+{
+    int width = input_dims[0];
+    int height = input_dims[1];
+    int pooled_height = output_dims[1];
+    int pooled_width = output_dims[0];
+    for(int n=0; n < input_dims[3]; n++) {
+        for(int c = 0; c < input_dims[2]; c++) {
+            for(int ph = 0; ph < pooled_height; ph++) {
+                int hstart = ph * stride_h - pad_h;
+                int hend = std::min(hstart + kernel_h , height);
+                hstart = std::max(hstart, 0);
+
+                for(int pw=0; pw < pooled_width; pw++) {
+                    int wstart = pw * stride_w - pad_w;
+                    int wend = std::min(wstart + kernel_w, width);
+                    wstart = std::max(wstart, 0);
+                    int pool_index = ph * pooled_width + pw;
+
+                    float y_val = 0.0;
+                    for(int h = hstart; h < hend; h++) {
+                        for(int w = wstart; w < wend ; w++) {
+                            int input_index = h * width + w;
+                            y_val += inputs[input_index];
+                        }
+                    }
+
+                    int pool_size = (hend - hstart) * (wend - wstart);
+                    outputs[pool_index] = y_val / pool_size;
+                }
+            }
+
+            inputs += height * width;
+            outputs += pooled_height * pooled_width;
+        }
+    }
+}
+
 static vx_status VX_CALLBACK validatePoolingLayer(vx_node node, const vx_reference parameters[], vx_uint32 num, vx_meta_format metas[])
 {
     // check scalar type
@@ -89,50 +128,98 @@ static vx_status VX_CALLBACK processPoolingLayer(vx_node node, const vx_referenc
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_BUFFER_OPENCL, &data->input_mem, sizeof(data->input_mem)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_BUFFER_OPENCL, &data->output_mem, sizeof(data->output_mem)));
 
+#if 0
     ERROR_CHECK_MIOPEN_STATUS(miopenPoolingForward(miopenHandle, data->pool_desc, &data->alpha, data->input_desc, data->input_mem, &data->beta, data->output_desc, data->output_mem, false, nullptr, 0));
+#endif
+
+#if 1
+    //Deducing the pooling type.
+    vx_nn_pooling_type_e modeType;
+    ERROR_CHECK_STATUS(vxCopyScalar((vx_scalar)parameters[1], &modeType, VX_READ_ONLY, VX_MEMORY_TYPE_HOST));
+
+    if(modeType == VX_NN_POOLING_MAX) {
+        ERROR_CHECK_MIOPEN_STATUS(miopenPoolingForward(miopenHandle, data->pool_desc, &data->alpha, data->input_desc, data->input_mem, &data->beta, data->output_desc, data->output_mem, false, nullptr, 0));
+    }
+    else if(modeType == VX_NN_POOLING_AVG) {
+        clFinish(data->handle->cmdq);
+        vx_size input_dims[4], output_dims[4];
+        vx_size pad_h, pad_w, kernel_h, kernel_w, stride_h, stride_w;
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
+        ERROR_CHECK_STATUS(vxCopyScalar((vx_scalar)parameters[2], &kernel_w, VX_READ_ONLY, VX_MEMORY_TYPE_HOST));
+        ERROR_CHECK_STATUS(vxCopyScalar((vx_scalar)parameters[3], &kernel_h, VX_READ_ONLY, VX_MEMORY_TYPE_HOST));
+        ERROR_CHECK_STATUS(vxCopyScalar((vx_scalar)parameters[4], &pad_w, VX_READ_ONLY, VX_MEMORY_TYPE_HOST));
+        ERROR_CHECK_STATUS(vxCopyScalar((vx_scalar)parameters[5], &pad_h, VX_READ_ONLY, VX_MEMORY_TYPE_HOST));
+
+        stride_w = (output_dims[0] > 1) ? ((input_dims[0] + 2 * pad_w - kernel_w + ((output_dims[0] - 1) / 2)) / (output_dims[0] - 1)) : 1;
+        stride_h = (output_dims[1] > 1) ? ((input_dims[1] + 2 * pad_h - kernel_h + ((output_dims[1] - 1) / 2)) / (output_dims[1] - 1)) : 1;
+
+        long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
+        float * input_data = new float[input_count];
+        long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
+        float * output_data = new float[output_count];
+
+        cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE, 0, sizeof(float) * input_count, input_data, 0, NULL, NULL);
+        if (err != CL_SUCCESS) {
+            std::cout << "ERROR : in reading the buffer pooling input" << std::endl;
+        }
+
+        processAveragePooling(pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, input_data, input_dims, output_data, output_dims);
+
+        int cl_err = clEnqueueWriteBuffer(data->handle->cmdq, data->output_mem, CL_TRUE, 0, sizeof(float) * output_count, output_data, 0, NULL, NULL);
+        if (cl_err != CL_SUCCESS) {
+            std::cout << "ERROR: in writing buffer pooling." << std::endl;
+            return -1;
+        }
+        clFinish(data->handle->cmdq);
+
+        delete input_data;
+        delete output_data;
+
+    }
+#endif
 
 #if ENABLE_DUMP_LAYERS
 
-	clFinish(data->handle->cmdq);
-	vx_size input_dims[4], output_dims[4];
-	ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
+    clFinish(data->handle->cmdq);
+    vx_size input_dims[4], output_dims[4];
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_DIMS, input_dims, sizeof(input_dims)));
     ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[7], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
 
     char str[10]; sprintf(str, "%04d", get_counter());
     std::string counter_val = str;
 
     std::string input_file = "out/" + counter_val + "_ann_pooling_layer_input";
-	FILE * fs_inputs = fopen(input_file.c_str(), "wb");
-	long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
-	float * inputs = new float[input_count];
-	cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE, 0, sizeof(float) * input_count, inputs, 0, NULL, NULL);
-	if (err != CL_SUCCESS) {
-		std::cout << "ERROR : in reading the buffer pooling input" << std::endl;
-	}
-	clFinish(data->handle->cmdq);
-	fwrite(inputs, sizeof(float), input_count, fs_inputs);
-	fclose(fs_inputs);
+    FILE * fs_inputs = fopen(input_file.c_str(), "wb");
+    long input_count = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3];
+    float * inputs = new float[input_count];
+    cl_int err = clEnqueueReadBuffer(data->handle->cmdq, data->input_mem, CL_TRUE, 0, sizeof(float) * input_count, inputs, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        std::cout << "ERROR : in reading the buffer pooling input" << std::endl;
+    }
+    clFinish(data->handle->cmdq);
+    fwrite(inputs, sizeof(float), input_count, fs_inputs);
+    fclose(fs_inputs);
 
-	//output dump
+    //output dump
     std::string output_file = "out/" + counter_val + "_ann_pool_layer_output";
-	FILE * fs_outputs = fopen(output_file.c_str(), "wb");
-	long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
-	float * outputs = new float[output_count];
-	err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE, 0, sizeof(float) * output_count, outputs, 0, NULL, NULL);
-	if (err != CL_SUCCESS) {
-		std::cout << "ERROR in reading output buffer pooling " << std::endl;
-	}
-	clFinish(data->handle->cmdq);
-	fwrite(outputs, sizeof(float), output_count, fs_outputs);
-	fclose(fs_outputs);
-	increment_counter();
+    FILE * fs_outputs = fopen(output_file.c_str(), "wb");
+    long output_count = output_dims[0] * output_dims[1] * output_dims[2] * output_dims[3];
+    float * outputs = new float[output_count];
+    err = clEnqueueReadBuffer(data->handle->cmdq, data->output_mem, CL_TRUE, 0, sizeof(float) * output_count, outputs, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        std::cout << "ERROR in reading output buffer pooling " << std::endl;
+    }
+    clFinish(data->handle->cmdq);
+    fwrite(outputs, sizeof(float), output_count, fs_outputs);
+    fclose(fs_outputs);
+    increment_counter();
 
-	delete inputs;
-	delete outputs;
+    delete inputs;
+    delete outputs;
 #endif
 
-    return VX_SUCCESS;
-}
+    return VX_SUCCESS;}
 
 static vx_status VX_CALLBACK initializePoolingLayer(vx_node node, const vx_reference *parameters, vx_uint32 num)
 {
