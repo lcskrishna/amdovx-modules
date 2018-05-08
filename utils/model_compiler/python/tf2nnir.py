@@ -36,10 +36,11 @@ from tensorflow.python.framework import tensor_util
 def tf_name_to_ir_name(name):
     return '_'.join(('_'.join(name.split('/')).split('-')))
 
-def tf_tensor_to_ir_tensor(tensor_name, tensor_data_type, tensor_shape):
+def tf_tensor_to_ir_tensor(tensor_name, tensor_data_type, tensor_shape, layout):
     tensor = IrTensor()
     tensor.setName(tf_name_to_ir_name(tensor_name))
     tensor.setInfo(tensor_data_type, [int(x) for x in tensor_shape])
+    tensor.setFormat(layout)
     return tensor
 
 def extractInput(graph_def, inputs, verbose, graph, dims):
@@ -78,7 +79,7 @@ def extractInput(graph_def, inputs, verbose, graph, dims):
 
     input_name = tf_name_to_ir_name(inputs)
     input_info[str(input_name)] = input_dims
-    graph.addInput(tf_tensor_to_ir_tensor(input_name, tensor_data_type, input_dims))
+    graph.addInput(tf_tensor_to_ir_tensor(input_name, tensor_data_type, input_dims, "NCHW"))
 
     if (verbose):
         print ("OK: extracted input information from graph")    
@@ -86,18 +87,33 @@ def extractInput(graph_def, inputs, verbose, graph, dims):
 
 def extractBinary(graph_def, verbose, graph):
     layers = graph_def.node
+    weight_map_info = collections.OrderedDict()
     for i in range(len(layers)):
         node = layers[i]
         if (node.op == "Const"):
             if "value" in node.attr:
-                tensor_name = tf_name_to_ir_name(node.name)
-                graph.addBinary(tensor_name, node.attr["value"].tensor.tensor_content)
+                tensor_name = str(tf_name_to_ir_name(node.name))
+                attr_info = node.attr["value"]
+                graph.addBinary(tensor_name, attr_info.tensor.tensor_content)
+                dims = attr_info.tensor.tensor_shape.dim
+                weight_dims = []
+                for j in range(len(dims)):
+                    weight_dims.append(dims[j].size)
+                weight_map_info[tensor_name] = weight_dims
+                graph.addVariable(tf_tensor_to_ir_tensor(tensor_name, "F032", weight_dims, "HWCN"))
+
+    if (verbose):
+        print (weight_map_info)
+        print ("OK: done extracting weights")
+    
+    return weight_map_info                                
+                
 
 def extractTFNodeInfo(layers, verbose):
     count = 0
     for i in range(len(layers)):
         node = layers[i]
-        if (node.op == "RandomShuffleQueueV2" or node.op == "QueueDequeueManyV2" or node.op == "Identity"):
+        if (node.op == "RandomShuffleQueueV2" or node.op == "QueueDequeueManyV2"):
             continue
         
         print ("Layer Type :: " + str(node.op))
@@ -110,7 +126,7 @@ def extractTFNodeInfo(layers, verbose):
 def tf_graph_to_ir_graph(graph_def, inputs, outputs, verbose, dims):
     graph = IrGraph()
     input_info = extractInput(graph_def, inputs, verbose, graph, dims)
-    extractBinary(graph_def, verbose, graph)
+    weight_map_info = extractBinary(graph_def, verbose, graph)
     return graph
 
 def tf2ir(graph_def, inputs, outputs, outputFolder, verbose, dims):
