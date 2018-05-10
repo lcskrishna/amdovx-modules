@@ -52,15 +52,14 @@ def extractInput(graph_def, inputs, verbose, graph, dims):
     isInputFound = False
     if dims is not None:
         input_dims = dims.split(",")
-        print ("Input dims added are : ")
-        print (input_dims)
+        if (verbose):
+            print ("Input dims added are : " + str(input_dims))
     for i in range(len(layers)):
         node = layers[i]
         if (node.name == inputs):
             attr_info = node.attr['value']
             tensor_proto = attr_info.tensor
             tensor_shape = tensor_proto.tensor_shape
-            print (tensor_proto.dtype)
             if (len(tensor_shape.dim) > 0 and (dims is None)):
                 for j in range(len(tensor_shape.dim)):
                     input_dims.append(tensor_shape.dim[j].size)
@@ -98,35 +97,104 @@ def extractBinary(graph_def, verbose, graph):
                 dims = attr_info.tensor.tensor_shape.dim
                 weight_dims = []
                 for j in range(len(dims)):
-                    weight_dims.append(dims[j].size)
+                    weight_dims.append(int(dims[j].size))
                 weight_map_info[tensor_name] = weight_dims
                 graph.addVariable(tf_tensor_to_ir_tensor(tensor_name, "F032", weight_dims, "HWCN"))
 
     if (verbose):
-        print (weight_map_info)
+        #print (weight_map_info)
         print ("OK: done extracting weights")
     
     return weight_map_info                                
-                
+    
+def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasList):
+    layer_type = str(node.op)
+    attribute_map = {}
+    if (layer_type == "Conv2D"):
+        inputs = node.input
+        input_weight_name = tf_name_to_ir_name(str(inputs[1]))
+        weight_name = identityMapAliasList[input_weight_name] if (input_weight_name in identityMapAliasList) else input_weight_name
+        kernel_h, kernel_w, _ , _  = weight_info_map[weight_name]
+        strides = node.attr["strides"].list.i
+        dilations = []
+        if "dilations" in node.attr:
+            dilations  = node.attr["dilations"].list.i
+        else:
+            dilations = [1,1]
+        
+        attribute_map["strides"] = [int(strides[2]), int(strides[3])]
+        attribute_map["kernel_shape"] = [int(kernel_w), int(kernel_h)]
+        attribute_map["dilations"] = [int(dilations[0]), int(dilations[1])]
+        #TODO: pad calculation is pending.
+        
+    elif (layer_type == "MaxPool"):
+        kernel_size = node.attr["ksize"].list.i
+        strides = node.attr["strides"].list.i
 
-def extractTFNodeInfo(layers, verbose):
+        attribute_map["kernel_shape"] = [int(kernel_size[2]), int(kernel_size[3])]
+        attribute_map["strides"] = [int(strides[2]), int(strides[3])]
+
+    elif (layer_type == "LRN"):
+        alpha = node.attr["alpha"].f
+        beta = node.attr["beta"].f
+        bias = node.attr["bias"].f
+        local_size = node.attr["depth_radius"].f
+
+        attribute_map["alpha"] = alpha
+        attribute_map["beta"] = beta
+        attribute_map["bias"] = bias
+        attribute_map["size"] = local_size
+        
+    return attribute_map    
+
+def extractTFNodeInfo(graph_def, input_names, output_names, graph_input_info, weights_info_map, verbose, graph):
+
+    layers = graph_def.node
+    inputs_tf = input_names.split(",")
+    outputs_tf = output_names.split(",")
+
     count = 0
+    identityMapAliasList = {}
+    inputOutputMap = collections.OrderedDict()
+    inputsMap = {}
+    outputsMap = {}
     for i in range(len(layers)):
         node = layers[i]
-        if (node.op == "RandomShuffleQueueV2" or node.op == "QueueDequeueManyV2"):
+        layer_info_map = {}
+        
+        layer_name = tf_name_to_ir_name(str(node.name))
+        layer_type = str(node.op)
+        
+        if (node.op == "RandomShuffleQueueV2" or node.op == "QueueDequeueManyV2" or node.op == "Const"):
             continue
-        
-        print ("Layer Type :: " + str(node.op))
-        print ("Layer Name :: " + str(node.name))
-        
+
+        if (node.op == "Identity"):
+            output_name = str(tf_name_to_ir_name(node.name))
+            input_name = str(tf_name_to_ir_name(node.input[0]))
+            identityMapAliasList[output_name] = input_name  
+            continue
+
+        input_info_map = collections.OrderedDict()
+        output_info_map = collections.OrderedDict()
+
+        layer_info_map["layer_name"] = layer_name
+        layer_info_map["layer_type"] = layer_type
+
+        attribute_map = extractTFAttrInfo(node, input_info_map, weights_info_map, identityMapAliasList)
+        layer_info_map["attributes"] = attribute_map
+
+        if (verbose):
+            print (layer_info_map)
+
         count += 1
 
-    print (count)
+    print ("Total usable layers :  " + str(count))
 
 def tf_graph_to_ir_graph(graph_def, inputs, outputs, verbose, dims):
     graph = IrGraph()
     input_info = extractInput(graph_def, inputs, verbose, graph, dims)
     weight_map_info = extractBinary(graph_def, verbose, graph)
+    extractTFNodeInfo(graph_def, inputs, outputs, input_info, weight_map_info, verbose, graph)
     return graph
 
 def tf2ir(graph_def, inputs, outputs, outputFolder, verbose, dims):
@@ -157,7 +225,7 @@ def main():
 if __name__ == '__main__':
 
     if len(sys.argv) < 4:
-        print ("Usage: python tf2nnir.py --pb-file <TF pb file> --nnir-folder <nnirOutputFolder> --input <Input> --output <  [--verbose 0|1]")
+        print ("Usage: python tf2nnir.py --pb-file <tensorflow-pb-file> --nnir-folder <nnirOutputFolder> --inputs <input layer name> --outputs <output layer names> [--verbose 0|1]")
         sys.exit(1)
 
     parser = argparse.ArgumentParser()
