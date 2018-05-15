@@ -63,7 +63,7 @@ def extractInput(graph_def, inputs, verbose, graph, dims):
             tensor_shape = tensor_proto.tensor_shape
             if (len(tensor_shape.dim) > 0 and (dims is None)):
                 for j in range(len(tensor_shape.dim)):
-                    input_dims.append(tensor_shape.dim[j].size)
+                    input_dims.append(int(tensor_shape.dim[j].size))
             elif (input_dims != []):
                 isInputFound = True
                 break
@@ -116,7 +116,7 @@ def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasLis
         input_weight_name = tf_name_to_ir_name(str(inputs[1]))
         weight_name = identityMapAliasList[input_weight_name] if (input_weight_name in identityMapAliasList) else input_weight_name
         kernel_h, kernel_w, _ , _  = weight_info_map[weight_name]
-        strides = node.attr["strides"].list.i
+        strides_info = node.attr["strides"].list.i
         dilations = []
         
         #extract data format 
@@ -132,11 +132,11 @@ def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasLis
         ## strides info.
         strides = []
         if (data_format == "NCHW"):
-            strides = [int(strides[2], int(strides[3])]
-            attribute_map["strides"] = [int(strides[2]), int(strides[3])]
+            strides = [int(strides_info[2]), int(strides_info[3])]
+            attribute_map["strides"] = [int(strides_info[2]), int(strides_info[3])]
         elif (data_format == "NHWC"):
-            strides = [int(strides[1]), int(strides[2])]
-            attribute_map["strides"] = [int(strides[1]), int(strides[2])]
+            strides = [int(strides_info[1]), int(strides_info[2])]
+            attribute_map["strides"] = [int(strides_info[1]), int(strides_info[2])]
         else:
             print ("ERROR: unsupported data format " + data_format)
             sys.exit(1)
@@ -146,7 +146,12 @@ def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasLis
         
         pads = [0,0]
         inputs = input_info_map.keys()
-        n,c,h,w = input_info_map[inputs[0]]
+        n,c,h,w = 0,0,0,0
+        if (data_format == "NCHW"):
+            n,c,h,w = input_info_map[inputs[0]]
+        else:
+            n,h,w,c = input_info_map[inputs[0]]
+
         if (h % (strides[1]) == 0):
             pads[1] = max(kernel_h - strides[1], 0)
         else:
@@ -157,10 +162,10 @@ def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasLis
         else:
             pads[0] = max(kernel_w - (w % strides[0]), 0)
         
-        pad_top = pad_h // 2
-        pad_bottom = pad_h - pad_top
-        pad_left = pad_w // 2
-        pad_right = pad_w - pad_left
+        pad_top = pads[1] // 2
+        pad_bottom = pads[1] - pad_top
+        pad_left = pads[0] // 2
+        pad_right = pads[0] - pad_left
 
         attribute_map["pads"] = [pad_left, pad_top, pad_right, pad_bottom]
         
@@ -168,23 +173,54 @@ def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasLis
         kernel_size = node.attr["ksize"].list.i
         strides = node.attr["strides"].list.i
 
-        attribute_map["kernel_shape"] = [int(kernel_size[2]), int(kernel_size[3])]
-        attribute_map["strides"] = [int(strides[2]), int(strides[3])]
+        data_format = "NCHW"
+        if ("data_format" in node.attr):
+            data_format = node.attr['data_format'].s
+
+        if (data_format == "NCHW"):
+            attribute_map["kernel_shape"] = [int(kernel_size[2]), int(kernel_size[3])]
+            attribute_map["strides"] = [int(strides[2]), int(strides[3])]
+        elif (data_format == "NHWC"):
+            attribute_map["kernel_shape"] = [int(kernel_size[1]), int(kernel_size[2])]
+            attribute_map["strides"] = [int(strides[1]), int(strides[2])]
+        else:
+            print ("ERROR: unsupported data format for pooling")
+            sys.exit(1)
+
+        pads = [0,0]
+        inputs = input_info_map.keys()
+        n,c,h,w = 0,0,0,0
+        if (h % (strides[1]) == 0):
+            pads[1] = max(kernel_size[1] - strides[1], 0)
+        else:
+            pads[1] = max(kernel_size[1] - (kernel_size[1] % strides[1]), 0)
+
+        if (w % strides[0] == 0):
+            pads[0] = max(kernel_size[0] - strides[0], 0)
+        else:
+            pads[0] = max(kernel_size[0] - (kernel_size[0] % strides[0]), 0)
+
+        pad_top = pads[1] // 2
+        pad_bottom = pads[1] - pad_top
+        pad_left = pads[0] // 2
+        pad_right = pads[0] - pad_left
+
+        attribute_map["pads"] = [pad_left, pad_top, pad_right, pad_bottom]
 
     elif (layer_type == "LRN"):
         alpha = node.attr["alpha"].f
         beta = node.attr["beta"].f
         bias = node.attr["bias"].f
-        local_size = node.attr["depth_radius"].f
+        local_size = node.attr["depth_radius"].i
 
         attribute_map["alpha"] = alpha
         attribute_map["beta"] = beta
         attribute_map["bias"] = bias
-        attribute_map["size"] = local_size
+        attribute_map["size"] = int(local_size)
         
     return attribute_map
 
-def calculateTensorDims(node, input_info_map, attribute_map):
+def calculateTensorDims(node, input_info_map, weights_info_map, identityMapAliasList , attribute_map):
     dimList = {}
     output_dims = [0, 0, 0, 0]
     inputs = input_info_map.keys()
@@ -194,26 +230,93 @@ def calculateTensorDims(node, input_info_map, attribute_map):
         strides = attribute_map["strides"]
         dilations = attribute_map["dilations"]
         kernel_shape = attribute_map["kernel_shape"]
-        n,c,h,w = input_info_map[inputs[0]]
-        if (node.attr["padding"].s == "SAME"):
-            print ("INFO: output dimensions for same padding is calculated")
-            output_height = math.ceil(math.float(h) / math.float(strides[1]))
-            output_width = math.ceil(math.float(w) / math.float(strides[0]))
-        elif (node.attr["padding"].s == "VALID"):
-            print ("INFO: output dimensions for valid padding is calculated.")
-            output_height = math.ceil(math.float(h - kernel_shape[1] + 1 )/math.float(strides[1]))
-            output_width = math.ceil(math.float(w - kernel_shape[0] + 1)/ math.float(strides[0]))
-        else:
-            print ("ERROR: unsupported padding format for calculating conv output dimensions")
-            sys.exit(1)
-
         data_format = "NCHW"
         if ("data_format" in node.attr):
             data_format = node.attr["data_format"].s
-        
+        n,c,h,w = 0,0,0,0
+        if (data_format == "NCHW"):
+            n,c,h,w = input_info_map[inputs[0]]
+        else:
+            n,h,w,c = input_info_map[inputs[0]]
+
+        weights_name = tf_name_to_ir_name(str(node.input[1]))
+        if (weights_name in identityMapAliasList):
+            weights_name = identityMapAliasList[weights_name]
+
+        weight_dims = weights_info_map[weights_name]
+
+        output_height = h
+        output_width = w
+        if (node.attr["padding"].s == "SAME"):
+            print ("INFO: output dimensions for same padding is calculated")
+            output_height = math.ceil(float(h) / float(strides[1]))
+            output_width = math.ceil(float(w) / float(strides[0]))
+        elif (node.attr["padding"].s == "VALID"):
+            print ("INFO: output dimensions for valid padding is calculated.")
+            output_height = math.ceil(float(h - kernel_shape[1] + 1 )/float(strides[1]))
+            output_width = math.ceil(float(w - kernel_shape[0] + 1)/ float(strides[0]))
+        else:
+            print ("ERROR: unsupported padding format for calculating conv output dimensions")
+            sys.exit(1)
+   
         if (data_format == "NCHW"):
             output_dims[0] = n
-            output_dims[1] = 
+            output_dims[1] = weight_dims[3]
+            output_dims[2] = int(output_height)
+            output_dims[3] = int(output_width)
+        elif (data_format == "NHWC"):
+            output_dims[0] = n
+            output_dims[1] = int(output_height)
+            output_dims[2] = int(output_width)
+            output_dims[3] = weight_dims[3]
+        else:
+            print ("ERROR: unsupported data format in convolution")
+            sys.exit(1)
+    
+    elif (layer_type == "MaxPool"):
+        data_format = "NCHW"
+        strides = attribute_map["strides"]
+        kernel_shape = attribute_map["kernel_shape"]        
+        if ("data_format" in node.attr):
+            data_format = node.attr["data_format"].s
+        
+        n,c,h,w = 0,0,0,0
+        if (data_format == "NCHW"):
+            n,c,h,w = input_info_map[inputs[0]]
+        else:
+            n,h,w,c = input_info_map[inputs[0]]
+
+        output_height = h
+        output_width = w
+        if (node.attr["padding"].s == "SAME"):
+            output_height = math.ceil(float(h)/ float(strides[1]))
+            output_width = math.ceil(float(w)/float(strides[0]))
+        elif (node.attr["padding"].s == "VALID"):
+            output_height = math.ceil(float(h - kernel_shape[1] + 1) / float(strides[1]))
+            output_width = math.ceil(float(w - kernel_shape[0] + 1)/ float(strides[0]))
+        else:
+            print ("ERROR: unsupported padding format for calculating the pooling output dimensions")
+            sys.exit(1)
+
+        if (data_format == "NCHW"):
+            output_dims[0] = n
+            output_dims[1] = c
+            output_dims[2]= int(output_height)
+            output_dims[3] = int(output_width)
+        elif (data_format == "NHWC"):
+            output_dims[0] = n
+            output_dims[1] = int(output_height)
+            output_dims[2] = int(output_width)
+            output_dims[3] = c
+        else:
+            print ("ERROR: unsupported data format in pooling : " + data_format )
+            sys.exit(1)
+    else:
+        print ("Layer type is :::::" + layer_type)
+        output_dims = input_info_map[inputs[0]]
+
+    dimList["outputs"] = output_dims
+    return dimList
 
 
 def extractTFNodeInfo(graph_def, input_names, output_names, graph_input_info, weights_info_map, verbose, graph):
@@ -251,27 +354,38 @@ def extractTFNodeInfo(graph_def, input_names, output_names, graph_input_info, we
 
         ## extract inputs to the layers.
         inputs = node.input
-        if (count == 0):
-            in_name = tf_name_to_ir_name(str(inputs[0]))
-            if (in_name in identityMapAliasList):
-                in_name = identityMapAliasList[in_name]
-            input_info_map[in_name] = graph_input_info[in_name]
-        else:
-            if (layer_type != "ConcatV2" or layer_type != "Add" or layer_type != "Sub"):
+        if (len(inputs) > 0):
+            if (count == 0):
                 in_name = tf_name_to_ir_name(str(inputs[0]))
                 if (in_name in identityMapAliasList):
                     in_name = identityMapAliasList[in_name]
-                if (in_name in outputsMap):
-                    input_info_map[in_name] = outputsMap[in_name] 
+                input_info_map[in_name] = graph_input_info[in_name]
             else:
-                for j in range(len(inputs)):
-                    in_name = tf_name_to_ir_name(str(inputs[j]))
+                if (layer_type != "ConcatV2" or layer_type != "Add" or layer_type != "Sub"):
+                    in_name = tf_name_to_ir_name(str(inputs[0]))
                     if (in_name in identityMapAliasList):
                         in_name = identityMapAliasList[in_name]
                     if (in_name in outputsMap):
                         input_info_map[in_name] = outputsMap[in_name]
-
-        inputsMap.update(input_info_map)
+                    elif (in_name in weights_info_map):
+                        input_info_map[in_name] = weights_info_map[in_name]
+                    else:
+                        print ("ERROR: unable to extract input dims for : " + in_name)
+                        sys.exit(1) 
+                else:
+                    for j in range(len(inputs)):
+                        in_name = tf_name_to_ir_name(str(inputs[j]))
+                        if (in_name in identityMapAliasList):
+                            in_name = identityMapAliasList[in_name]
+                        if (in_name in outputsMap):
+                            input_info_map[in_name] = outputsMap[in_name]
+                        elif (in_name in weights_info_map):
+                            input_info_map[in_name] = weights_info_map[in_name]
+                        else:
+                            print ("ERROR: unable to extract input dims for : " + in_name)
+                            sys.exit(1)
+        if (input_info_map):            
+            inputsMap.update(input_info_map)
 
         ## add inputs to the layer info.
         layer_info_map["inputs"] = input_info_map
@@ -280,12 +394,18 @@ def extractTFNodeInfo(graph_def, input_names, output_names, graph_input_info, we
         attribute_map = extractTFAttrInfo(node, input_info_map, weights_info_map, identityMapAliasList)
         layer_info_map["attributes"] = attribute_map
 
-        ## calculate output tensor dimensions.
-        dimList = calculateTensorDimensions(node, input_info_map, attribute_map)
+        ## calculate output tensor dimensions.        
+        dimList = calculateTensorDims(node, input_info_map, weights_info_map, identityMapAliasList, attribute_map)
 
         ## add output info to layer info.
+        output_info_map[layer_name] = dimList["outputs"]
+        outputsMap[layer_name] = dimList["outputs"]
+        layer_info_map["outputs"] = output_info_map
+        
+        inputOutputMap[count] = layer_info_map
 
         if (verbose):
+            print (" ============================= " + str(count) + " =========================")
             print (layer_info_map)
 
         count += 1
