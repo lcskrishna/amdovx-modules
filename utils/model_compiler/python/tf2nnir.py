@@ -68,8 +68,14 @@ def extractInput(graph_def, inputs, verbose, graph, dims):
                 isInputFound = True
                 break
             else:
-                print ("ERROR: unable to access the input dims, please add the input dims manually using --input-dims parameter.")
-                sys.exit(1)
+                if (node.op == "Placeholder"):
+                    if ("shape" in node.attr):
+                        input_shape_dim = node.attr["shape"].shape.dim
+                        for j in range(len(input_shape_dim)):
+                            input_dims.append(int(input_shape_dim[j].size))
+                    else:
+                        print ("ERROR: unable to access the input dims, please add the input dims manually using --input-dims parameter.")
+                        sys.exit(1)
             isInputFound = True
             break
     
@@ -140,6 +146,8 @@ def extractTFAttrInfo(node, input_info_map, weight_info_map, identityMapAliasLis
         else:
             print ("ERROR: unsupported data format " + data_format)
             sys.exit(1)
+        
+        print (strides)
 
         attribute_map["kernel_shape"] = [int(kernel_w), int(kernel_h)]
         attribute_map["dilations"] = [int(dilations[0]), int(dilations[1])]
@@ -337,7 +345,7 @@ def extractTFNodeInfo(graph_def, input_names, output_names, graph_input_info, we
         layer_name = tf_name_to_ir_name(str(node.name))
         layer_type = str(node.op)
         
-        if (node.op == "RandomShuffleQueueV2" or node.op == "QueueDequeueManyV2" or node.op == "Const"):
+        if (node.op == "RandomShuffleQueueV2" or node.op == "QueueDequeueManyV2" or node.op == "Placeholder" or node.op == "Const"):
             continue
 
         if (node.op == "Identity"):
