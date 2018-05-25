@@ -38,6 +38,9 @@ from tensorflow.python.tools import strip_unused_lib
 from tensorflow.python.framework import dtypes
 from tensorflow.python.platform import gfile
 
+'''
+TF2IRUtil contains the utility classes that are required to convert from TF to NNIR format.
+'''
 class TF2IRUtil:
     # converts TF name to IR name.
     def tf_name_to_ir_name(self, name):
@@ -85,10 +88,32 @@ class LayerInfo:
     def set_biases(self, bias_map):
         self.biases.update(bias_map)
 
-    def toString(self):
-        return self.layer_name + " | " + self.layer_type + " | " + self.inputs + " | " + self.outputs + " | " + self.weights + " | " + self.biases + " | " + self.attributes
+    def print_info(self):
+        return str(self.layer_name) + " | " + str(self.layer_type) + " | " + str(self.inputs) + " | " + str(self.outputs) + " | " + str(self.weights) + " | " + str(self.biases) + " | " + str(self.attributes)
 
 class TFNodeInfoExtractor:
+
+    skip_type = set([
+     "L2Loss",
+     "VariableV2",
+     "Const",
+     "Assign",
+     "RandomUniform",
+     "FIFOQueueV2",
+     "Assert",
+     "Unpack",
+     "NextIteration",
+     "TensorArrayV3",
+     "Range",
+     "TensorArrayScatterV3",
+     "TensorArrayReadV3",
+     "TensorArrayWriteV3",
+     "Dequantize",
+     "ExpandDims",
+     "Placeholder",
+     "Pack",
+     "Squeeze"
+    ])
 
     def __init__(self):
         self.tf2ir_util = TF2IRUtil()
@@ -147,6 +172,95 @@ class TFNodeInfoExtractor:
             print ("OK: extract input information from the graph.")
         
         return input_info
+
+    # extraction of binary data in the graph.
+    def extractBinary(self, graph_def, verbose, graph):
+        layers = graph_def.node
+        weight_info_map = collections.OrderedDict()
+        for i in range(len(layers)):
+            node = layers[i]
+            if (node.op == "Const"):
+                if "value" in node.attr:
+                    tensor_name = self.tf2ir_util.tf_name_to_ir_name(str(node.name))
+                    attr_info = node.attr["value"]
+                    graph.addBinary(tensor_name, attr_info.tensor.tensor_content)
+                    dims = attr_info.tensor.tensor_shape.dim
+                    weight_dims = []
+                    for j in range(len(dims)):
+                        weight_dims.append(int(dims[j].size))
+                    weight_info_map[tensor_name] = weight_dims
+                    graph.addVariable(self.tf2ir_util.tf_tensor_to_ir_tensor(tensor_name, "F032", weight_dims, "HWCN"))
+
+        if (verbose):
+            print ("OK: done extracting weights")
+
+        return weight_info_map
+
+    # extraction of node information from TF nodes.
+    def extractTFNodeInformation(self, graph_def, inputs, graph_input_info, weights_info_map, verbose, graph):
+        network_layer_info = collections.OrderedDict()
+        inputsMap = {}
+        outputsMap = {}
+        count = 0
+        identityAliasMap = {}
+        multiple_input_layer_types = set(["ConcatV2", "Mul", "Add", "Sub"])
+        
+        layers = graph_def.node
+        for i in range(len(layers)):
+            node = layers[i]
+            layer_info = LayerInfo()
+            layer_name = self.tf2ir_util.tf_name_to_ir_name(str(node.name))
+            layer_type = str(node.op)
+            
+            ## if layer type is any of the operators present in skip type ignore them.
+            if (node.op in self.skip_type):
+                continue
+
+            ## if the layer type is identity, alias the input with with output.
+            if (node.op == "Identity"):
+                input_name = self.tf2ir_util.tf_name_to_ir_name(str(node.input))
+                output_name = self.tf2ir_util.tf_name_to_ir_name(str(node.name))
+                identityAliasMap[output_name] = input_name
+
+            ## layer type information.
+            layer_info.set_layer_type(str(node.op)) 
+            network_layer_info[count] = layer_info
+          
+            ## extraction of input of each layer.
+            input_info_map = collections.OrderedDict()
+            if (count == 0):
+                input_name = self.tf2ir_util.tf_name_to_ir_name(str(node.input[0]))
+                if (input_name in graph_input_info):
+                    input_info_map[input_name] = graph_input_info[input_name]
+                else:
+                    print ("ERROR: unable to extract input dims from the graph.")
+                    sys.exit(1)
+            else:
+                if (node.op not in multiple_input_layer_types):
+                    input_name = self.tf2ir_util.tf_name_to_ir_name(str(node.input[0]))
+                    input_info_map[input_name] = []
+                else:
+                    input_names = node.input
+                    for j in range (len(input_names)):
+                        input_name = self.tf2ir_util.tf_name_to_ir_name(str(input_names[j]))
+                        input_info_map[input_name] = []
+
+            layer_info.set_inputs(input_info_map)
+
+            ## extraction of output.
+            output_info_map = collections.OrderedDict()
+            output_name = layer_name
+            output_info_map[output_name] = []
+            layer_info.set_outputs(output_info_map)
+            
+            ## print information for debugging.
+            if (verbose):
+                print ("Count ------------------------------> " + str(count))
+                print ("layer-type: " + str(layer_info.layer_type) + " |inputs: " + str(layer_info.inputs) + " |outputs: " + str(layer_info.outputs))
+
+            count += 1
+
+        return network_layer_info
         
 '''
 TFFrozenModelUtil is used to load the frozen TF model and removes unnecessary 
@@ -181,6 +295,8 @@ def tf_graph_to_ir_graph(graph_def, inputs, input_dims, outputs, verbose):
     graph = IrGraph()
     tf_node_extractor = TFNodeInfoExtractor()
     input_info = tf_node_extractor.extractInput(graph_def, inputs, verbose, graph, input_dims)
+    weights_info_map = tf_node_extractor.extractBinary(graph_def, verbose, graph)
+    network_layer_info = tf_node_extractor.extractTFNodeInformation(graph_def, inputs, input_info, weights_info_map, verbose, graph)
     return graph
     
 def tf2ir(pb_file_path, inputs, input_dims,  outputs, outputFolder, verbose):
