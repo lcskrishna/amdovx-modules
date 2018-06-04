@@ -391,6 +391,13 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
                 splitLayerMap[caffe_name_to_ir_name(outputs[k])] = in_name
             continue
 
+        if (layer_type == "Accuracy"):
+            in_name = caffe_name_to_ir_name(str(inputs[0]))
+            if in_name in outputNameAliasMap:
+                in_name = outputNameAliasMap[in_name]
+            dropoutLayerMap[caffe_name_to_ir_name(str(outputs[0]))] = in_name
+            continue
+
         layer_info_map = {}
         input_info_map = collections.OrderedDict()
         output_info_map = collections.OrderedDict()
