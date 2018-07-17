@@ -48,6 +48,28 @@ class IrTensor:
         self.shape = [int(v) for v in lT[2].split(',')]
         self.format = lT[3]
 
+class IrBuffer:
+    def __init__(self):
+        self.name = 'Unknown'
+        self.type = 'F032'
+        self.size = 0
+        self.local_tensor_group = {}
+
+    def setName(self,name):
+        self.name = name
+
+    def setInfo(self, size, local_tensor_group):
+        self.size = size
+        self.local_tensor_group = local_tensor_group
+
+    def toString(self):
+        return self.name + ',' + self.size + ';'.join([(str(v) + ',' + str(self.local_tensor_group(v))) for v in self.local_tensor_group.keys()])
+
+    def fromString(self,s):
+        lT = s.split(';')
+        self.name , self.size = lT[0].split(',')
+        ## TODO: need to do local tensor group parsing into the string.        
+ 
 class IrAttr:
     def __init__(self):
         self.dict_values = {
@@ -674,6 +696,10 @@ class IrGraph:
             for node in nodesToRemove:
                 self.nodes.remove(node)
         self.removeUnusedTensors()
+    
+    def allocateBuffers(self):
+        ## TODO: add the code for it. 
+
 
     def sliceGroups(self):
         for idx, node in enumerate(self.nodes):
