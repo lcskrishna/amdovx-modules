@@ -198,9 +198,11 @@ class IrGraph:
     def __init__(self):
         self.inputs = []
         self.outputs = []
+        self.input_names = []
         self.output_names = []
         self.initializers = []
         self.locals = []
+        self.buffers = []
         self.nodes = []
         self.binaries = {}
         self.tensor_dict = {}
@@ -215,6 +217,7 @@ class IrGraph:
         self.tensor_shapes[tensor.name] = tensor.shape
         if tensor.type != 'F032':
             self.all_F032 = False
+        self.input_names.append(tensor.name)
 
     def addOutput(self,tensor):
         self.outputs.append(tensor)
@@ -440,6 +443,118 @@ class IrGraph:
             self.tensor_shapes[tensor.name] = tensor.shape
             self.tensor_dict[tensor.name] = tensor
 
+    def getLocalMemSize(self, node_info):
+        name = node_info['name']
+        local_size = 0
+        for locale in self.locals:
+            if (name == locale.name):
+                local_shape = self.tensor_shapes[locale.name]
+                local_size = 1
+                for x in local_shape:
+                    local_size = local_size * x
+
+        return local_size
+
+    def isMergePossible(self, gd, node_info):
+        node_levels = node_info['levels']
+        s = node_levels[1][0]
+        e = node_levels[1][1]
+        for g in gd:
+            g_levels = g['levels']
+            if ((s >= g_levels[1][0] and s <= g_levels[1][1]) and (e >= g_levels[1][0] and e <= g_levels[1][1])):
+                return False
+        return True
+
+    def calculateMergedCost(self, gd, node_info):
+        size = self.getLocalMemSize(node_info)
+        for g in gd:
+            size = max(size, self.getLocalMemSize(g))
+        return size 
+            
+    def allocateBuffers(self):
+        ## TODO: need to implement the code. 
+        '''
+            1. Form a graph (adjacency list), having the relationships between each node.
+            2. Iterate over the graph and identify graph levels that are independent.
+            3. Find the optimal groups and update the nnir file.
+        '''
+        # identify child of each nodes and their hierarchical levels.
+        graph_details = {}
+        for i in range(len(self.locals)):
+            locale = self.locals[i]
+            node_info = {}
+            node_info['name'] = locale.name
+            node_info['levels'] = [i, [sys.maxint, 0]]
+            children = {}
+            for idx in range(len(self.nodes)):
+                node = self.nodes[idx]
+                if locale.name in node.inputs:
+                     children[node.outputs[0]] = [idx, [sys.maxint, 0]]
+                     
+            node_info['child'] = children
+            graph_details[i] = node_info
+        
+        print (" ---- Initial data ----- " )    
+        print (graph_details)
+
+        # update hierarchy levels.
+        for i in range(len(graph_details)):
+            node_info = graph_details[i]
+            name = node_info['name']
+            hierarchy_levels = node_info['levels']
+            hierarchy_levels[1][0] = min(hierarchy_levels[1][0], hierarchy_levels[0])
+            hierarchy_levels[1][1] = max(hierarchy_levels[1][1], hierarchy_levels[0])
+            for j in range(i):
+                prev_node_info = graph_details[j]
+                prev_child_info = prev_node_info['child']
+                if (name in prev_child_info):
+                    prev_hierarchy_levels = prev_child_info[name]
+                    hierarchy_levels[1][0] = min(hierarchy_levels[1][0], prev_hierarchy_levels[1][0])
+                    hierarchy_levels[1][1] = max(hierarchy_levels[1][1], prev_hierarchy_levels[1][1])
+            node_info['levels'] = hierarchy_levels
+            ## update child
+            children = node_info['child']
+            for child_name in children:
+                child_hierarchy_levels = children[child_name]
+                child_hierarchy_levels[1][0] = min(child_hierarchy_levels[1][0], i)
+                child_hierarchy_levels[1][1] = max(child_hierarchy_levels[1][1], i)
+
+        print (" ---- after updating the hierarchy levels. ----- " )
+        print (graph_details)
+
+        # get group data.
+        group_data = {}
+        for i in range(len(graph_details)):
+            node_info = graph_details[i]
+            bestj = sys.maxint
+            bestCost = sys.maxint
+            groups = []
+            for j in range(len(group_data)):
+                gd = group_data[j]
+                if (self.isMergePossible(gd, node_info)):
+                    cost = self.calculateMergedCost(gd, node_info)
+                    if (cost < bestCost):
+                        bestj = j
+                        bestCost = cost
+            if (bestj == sys.maxint):
+                bestj = len(group_data)
+                bestCost = self.getLocalMemSize(node_info)
+            if (bestj in group_data):
+                prev_groups = group_data[bestj]
+                prev_groups.append(node_info)
+                group_data[bestj] = prev_groups
+            else:
+                groups.append(node_info)
+                group_data[bestj] = groups
+
+        # print grouped data.
+        print ( " ------ GROUPED DATA is ----------- ")
+        for i in range(len(group_data)):
+            print (group_data[i]) 
+
+        print ( " ------ SIZE is ------- " )
+        print (len(group_data))       
+ 
     def fuseOps(self):
         tensorReadCount = {}
         for node in self.nodes:
@@ -697,10 +812,6 @@ class IrGraph:
                 self.nodes.remove(node)
         self.removeUnusedTensors()
     
-    def allocateBuffers(self):
-        ## TODO: add the code for it. 
-
-
     def sliceGroups(self):
         for idx, node in enumerate(self.nodes):
             if node.type == 'conv' and node.attr.get('group') > 1:
