@@ -75,6 +75,7 @@ list(APPEND SOURCES
     src/upsample_nearest_layer.cpp
     src/tensor_table_lookup.cpp
     src/reshape_layer.cpp
+    src/rnn_layer.cpp
     )
 
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
