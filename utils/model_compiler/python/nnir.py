@@ -349,6 +349,7 @@ class IrGraph:
                     icount = 1
                     ocount = 1
                     shape = [input.shape[0]]
+                    print (shape)
                     for d in input.shape[1:]:
                         icount = icount * d
                     for d in param:
@@ -363,7 +364,7 @@ class IrGraph:
                         raise ValueError("reshape: mismatch detected: " + node.inputs[0] + ":" + str(input.shape) + " " + node.outputs[0] + ":" + str(shape))
                     local = IrTensor()
                     local.setName(output)
-                    local.setInfo(input.type, shape)
+                    local.setInfo(input.type, input.shape)
                     local.setFormat(input.format)
                     self.addLocal(local)
                 elif node.type in ['transpose']:

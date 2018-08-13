@@ -42,6 +42,7 @@ onnx2ir_attr = {
     'bias' : 'bias',
     'size' : 'size',
     'split' : 'split',
+    'shape' : 'shape',
 }
 
 onnx2ir_op_type = {
@@ -59,6 +60,8 @@ onnx2ir_op_type = {
     'LRN'                : 'lrn',
     'Concat'             : 'concat',
     'LeakyRelu'          : 'leaky_relu',
+    'Reshape'            : 'reshape',
+    'Transpose'          : 'transpose',
     'GlobalAveragePool'  : 'global_avg_pool',
     'Softmax'            : 'softmax'
 }
